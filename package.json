@@ -1,0 +1,27 @@
+{
+  "name": "telegram-chatbot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate"
+  },
+  "dependencies": {
+    "grammy": "^1.35.0",
+    "fastify": "^4.28.1",
+    "@prisma/client": "^5.22.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "tsx": "^4.19.2",
+    "prisma": "^5.22.0",
+    "vitest": "^2.1.8",
+    "@types/node": "^22.10.0"
+  }
+}
