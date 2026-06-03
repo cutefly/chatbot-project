@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { webhookCallback } from 'grammy';
 import type { Bot } from 'grammy';
 import { config } from '../config/index.js';
+import { buildZonedIso, isValidTimeZone } from './time.js';
 
 export async function createServer(bot: Bot) {
   const app = Fastify({ logger: true });
@@ -14,6 +15,19 @@ export async function createServer(bot: Bot) {
     status: 'ok',
     timestamp: new Date().toISOString(),
   }));
+
+  app.get('/api/get-time-by-region', async (req, reply) => {
+    const region = (req.query as { region?: string }).region;
+    if (!region || !isValidTimeZone(region)) {
+      reply.code(400);
+      return { error: 'Invalid or missing region. Provide a valid IANA timezone name.' };
+    }
+    return {
+      region,
+      datetime: buildZonedIso(region, new Date()),
+      timezone: region,
+    };
+  });
 
   // Telegram webhook — validates secret token before passing to grammy
   app.post('/webhook', async (req, reply) => {

@@ -10,6 +10,8 @@ export interface Tool {
   name: string;
   description: string;
   parameters: JSONSchema;
+  /** Injected as a system message after this tool runs, to format the final answer. */
+  responseGuidance?: string;
   execute(args: unknown): Promise<unknown>;
 }
 

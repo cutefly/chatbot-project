@@ -43,12 +43,32 @@ export async function chat(model: string, messages: LLMMessage[]): Promise<strin
 
       const results = await executeToolCalls(choice.message.tool_calls);
       currentMessages.push(...results);
+
+      for (const guidance of collectGuidance(choice.message.tool_calls)) {
+        currentMessages.push({ role: 'system', content: guidance });
+      }
     } else {
       return choice.message.content ?? '';
     }
   }
 
   throw new Error('Max tool call iterations reached without a final response');
+}
+
+function collectGuidance(toolCalls: ToolCall[]): string[] {
+  const guidance = new Set<string>();
+  for (const call of toolCalls) {
+    let tool;
+    try {
+      tool = toolRegistry.get(call.function.name);
+    } catch {
+      continue;
+    }
+    if (tool.responseGuidance) {
+      guidance.add(tool.responseGuidance);
+    }
+  }
+  return [...guidance];
 }
 
 async function callOpenRouter(

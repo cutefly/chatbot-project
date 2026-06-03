@@ -12,6 +12,7 @@ vi.mock('../../src/tools/index.js', () => ({
     toFunctionDefinitions: vi.fn(() => [
       { type: 'function', function: { name: 'echo', description: 'test', parameters: {} } },
     ]),
+    get: vi.fn((name: string) => ({ name, responseGuidance: undefined })),
   },
 }));
 
@@ -21,6 +22,7 @@ vi.mock('../../src/tools/executor.js', () => ({
 
 import { chat } from '../../src/services/llm.js';
 import { executeToolCalls } from '../../src/tools/executor.js';
+import { toolRegistry } from '../../src/tools/index.js';
 
 function mockFetch(responses: object[]) {
   let call = 0;
@@ -100,5 +102,80 @@ describe('LLMService', () => {
     const body = JSON.parse((global.fetch as any).mock.calls[0][1].body as string);
     expect(body.tools).toBeDefined();
     expect(body.tool_choice).toBe('auto');
+  });
+
+  it('injects a called tool responseGuidance as a system message on the 2nd LLM call', async () => {
+    const toolCall = {
+      id: 'call_1',
+      type: 'function',
+      function: { name: 'time_by_region', arguments: '{"region":"Asia/Seoul"}' },
+    };
+
+    vi.mocked(toolRegistry.get).mockReturnValue({
+      name: 'time_by_region',
+      responseGuidance: 'ANSWER IN THIS FORMAT',
+    } as any);
+
+    mockFetch([
+      {
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: { role: 'assistant', content: null, tool_calls: [toolCall] },
+        }],
+      },
+      {
+        choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Done!' } }],
+      },
+    ]);
+
+    vi.mocked(executeToolCalls).mockResolvedValue([
+      { tool_call_id: 'call_1', role: 'tool', content: '{"datetime":"2026-06-02 10:00:00"}' },
+    ]);
+
+    await chat('openai/gpt-4o-mini', [{ role: 'user', content: '서울 시간' }]);
+
+    const secondBody = JSON.parse((global.fetch as any).mock.calls[1][1].body as string);
+    const systemMessages = secondBody.messages.filter(
+      (m: { role: string }) => m.role === 'system',
+    );
+    expect(systemMessages).toHaveLength(1);
+    expect(systemMessages[0].content).toBe('ANSWER IN THIS FORMAT');
+  });
+
+  it('does not inject a system message when the called tool has no responseGuidance', async () => {
+    const toolCall = {
+      id: 'call_1',
+      type: 'function',
+      function: { name: 'echo', arguments: '{"message":"hi"}' },
+    };
+
+    vi.mocked(toolRegistry.get).mockReturnValue({
+      name: 'echo',
+      responseGuidance: undefined,
+    } as any);
+
+    mockFetch([
+      {
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: { role: 'assistant', content: null, tool_calls: [toolCall] },
+        }],
+      },
+      {
+        choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Done!' } }],
+      },
+    ]);
+
+    vi.mocked(executeToolCalls).mockResolvedValue([
+      { tool_call_id: 'call_1', role: 'tool', content: '{"echoed":"hi"}' },
+    ]);
+
+    await chat('openai/gpt-4o-mini', [{ role: 'user', content: 'echo hi' }]);
+
+    const secondBody = JSON.parse((global.fetch as any).mock.calls[1][1].body as string);
+    const systemMessages = secondBody.messages.filter(
+      (m: { role: string }) => m.role === 'system',
+    );
+    expect(systemMessages).toHaveLength(0);
   });
 });
