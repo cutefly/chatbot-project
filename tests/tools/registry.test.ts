@@ -31,6 +31,11 @@ describe('ToolRegistry', () => {
     expect(registry.getAll()[0]).toBe(mockTool);
   });
 
+  it('throws when registering a tool whose name is already taken', () => {
+    registry.register(mockTool);
+    expect(() => registry.register(mockTool)).toThrow('Tool already registered: test_tool');
+  });
+
   it('converts tools to OpenRouter function definitions', () => {
     registry.register(mockTool);
     const defs = registry.toFunctionDefinitions();

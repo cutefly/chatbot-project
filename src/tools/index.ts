@@ -1,9 +1,8 @@
 import { toolRegistry } from './registry.js';
 import { echoTool } from './echo.js';
-import { timeByRegionTool } from './time.js';
+import { loadToolDefs } from './loader.js';
 
-// Register all tools here — one import per tool
 toolRegistry.register(echoTool);
-toolRegistry.register(timeByRegionTool);
+loadToolDefs(toolRegistry);
 
 export { toolRegistry };

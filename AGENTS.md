@@ -44,6 +44,8 @@ DATABASE_URL=              # required — remote PostgreSQL connection string
 OPENROUTER_API_KEY=        # required
 OPENROUTER_DEFAULT_MODEL=openai/gpt-4o-mini   # default
 CONVERSATION_WINDOW_SIZE=20                    # default — sliding window message count
+TOOL_ENDPOINT_ALLOWLIST=localhost:3000,api.open-meteo.com   # default localhost:<PORT>,api.open-meteo.com — comma-separated host:port allowlist for declarative tool endpoints
+TOOL_VARS=                                     # optional JSON object of NON-SECRET {VAR} substitutions for declarative tools
 ```
 
 Copy `.env.example` to `.env` to start. The bot **auto-registers its own webhook** at startup via `bot.api.setWebhook(...)` — `WEBHOOK_URL` must be publicly reachable before running.
@@ -106,10 +108,13 @@ src/
 │   └── client.ts       # Prisma singleton (globalThis pattern)
 ├── tools/
 │   ├── types.ts        # Tool / ToolCall / ToolResult interfaces
-│   ├── registry.ts     # ToolRegistry class + singleton export
+│   ├── registry.ts     # ToolRegistry class + singleton export (register() throws on dup)
 │   ├── executor.ts     # executeToolCalls() — runs tool_calls in parallel
-│   ├── index.ts        # Registers all tools → import here to add a tool
-│   └── echo.ts         # Example tool (dev/test only)
+│   ├── loader.ts       # buildToolFromSpec() + loadToolDefs() — declarative .yaml tools
+│   ├── index.ts        # Registers code tools, then loadToolDefs() → add a tool here
+│   ├── echo.ts         # Example code tool (dev/test only)
+│   ├── defs/           # Declarative .yaml tool definitions (e.g. time_by_region.yaml, temp_by_region.yaml)
+│   └── transforms/     # Optional response transforms (default export (data)=>unknown)
 ├── services/
 │   ├── user.ts         # getOrCreateUser, isUserAllowed
 │   ├── conversation.ts # getOrCreateActive, getWindow, saveMessages, updateConversationModel
@@ -153,7 +158,63 @@ After pulling a migration someone else wrote: `npm run db:generate` to regenerat
 
 ## Adding a Tool
 
-Tools are auto-discovered by the LLM at runtime — a precise `description` and `parameters` JSON Schema are critical for the LLM to call them correctly.
+There are two ways to add a tool. Prefer the **declarative `.yaml`** path for anything
+that is "call an HTTP endpoint, map params, shape the response". Use the **code** path
+only when you need real logic that no HTTP call can express (the `echo` tool is the
+canonical code example).
+
+### A. Declarative `.yaml` tool (preferred)
+
+Drop a `.yaml` file in `src/tools/defs/`. It is loaded at startup by `loadToolDefs()`
+(wired in `src/tools/index.ts`). The whole file is a single YAML document declaring the
+tool; the `response_guidance` field becomes the tool's `responseGuidance`.
+
+```yaml
+name: my_tool                 # required, /^[a-z][a-z0-9_]*$/, unique across ALL tools
+description: When the LLM should call this and what it returns.   # required
+endpoint: http://localhost:{PORT}/api/thing   # required; {VAR} from the subst allowlist
+method: GET                   # GET|POST|PUT|PATCH|DELETE (default GET)
+timeout_ms: 5000              # default 5000, capped at 15000
+success_status: [200]         # optional; default = any 2xx
+content_type: application/json # default; sent only when body params exist
+headers:                      # optional static headers; values allow {VAR} (allowlist)
+  X-Trace: "{PORT}"
+parameters:                   # flat map paramName -> spec
+  region:
+    type: string              # string|number|integer|boolean|array
+    description: IANA timezone name.   # required
+    required: true            # default false
+    in: query                 # query|path|body|header (default query)
+    enum: ["a", "b"]          # optional
+    default: x                # optional
+    items_type: string        # required iff type=array
+response:
+  pick: [region, datetime]    # optional response field whitelist
+transform: time               # optional; module in src/tools/transforms/ (no extension)
+response_guidance: >-         # optional; injected as a system message after the tool
+  How the LLM should phrase the final answer using the tool's result.
+```
+
+Restart to load (`.yaml` and `.yml` are both picked up). Any parse/validation error
+logs the offending file and exits the process.
+
+**Transforms** — for value reshaping that needs real code (e.g. reformatting an ISO
+datetime), create `src/tools/transforms/<name>.ts` with a default export
+`(data: unknown) => unknown` and reference it via `transform: <name>`. It runs after
+the HTTP response is parsed (and after `response.pick`, if set).
+
+**Security / allowlist (enforced by the loader):**
+- The endpoint host:port (after `{VAR}` substitution AND after runtime param
+  substitution) must be in `TOOL_ENDPOINT_ALLOWLIST` (comma-separated, default
+  `localhost:<PORT>`). Non-http(s) schemes and URLs with embedded credentials are rejected.
+- `{VAR}` tokens resolve ONLY from the secret-safe substitution allowlist
+  (`getToolSubstitutionVars()` → `{ PORT, ...TOOL_VARS }`). An unknown token fails at
+  load time — secrets like `OPENROUTER_API_KEY` are never substitutable.
+- Put secrets only in `headers`, only via `TOOL_VARS` — never in query/path.
+
+### B. Code tool
+
+Use when logic can't be a declarative HTTP call. `register()` throws on a duplicate name.
 
 1. Create `src/tools/your_tool.ts`:
 
@@ -161,7 +222,7 @@ Tools are auto-discovered by the LLM at runtime — a precise `description` and 
 import type { Tool } from './types.js';
 
 export const yourTool: Tool = {
-  name: 'your_tool',           // snake_case, unique
+  name: 'your_tool',
   description: 'What it does and when the LLM should call it.',
   parameters: {
     type: 'object',
@@ -172,12 +233,12 @@ export const yourTool: Tool = {
   },
   async execute(args) {
     const { param } = args as { param: string };
-    return { result: '...' };  // returned as JSON string to the LLM
+    return { result: '...' };
   },
 };
 ```
 
-2. Add one line to `src/tools/index.ts`:
+2. Register it in `src/tools/index.ts` (code tools register BEFORE `loadToolDefs()`):
 
 ```typescript
 toolRegistry.register(yourTool);

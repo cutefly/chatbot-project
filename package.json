@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx --env-file=.env src/main.ts",
+    "dev": "tsx watch --env-file=.env src/main.ts",
     "build": "tsc",
     "start": "node --env-file=.env dist/main.js",
     "test": "vitest run",
@@ -12,16 +12,17 @@
     "db:generate": "prisma generate"
   },
   "dependencies": {
-    "grammy": "^1.35.0",
-    "fastify": "^4.28.1",
     "@prisma/client": "^5.22.0",
+    "fastify": "^4.28.1",
+    "grammy": "^1.35.0",
+    "yaml": "^2.9.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "typescript": "^5.7.2",
-    "tsx": "^4.19.2",
+    "@types/node": "^22.10.0",
     "prisma": "^5.22.0",
-    "vitest": "^2.1.8",
-    "@types/node": "^22.10.0"
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }

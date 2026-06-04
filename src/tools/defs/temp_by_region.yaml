@@ -1,0 +1,27 @@
+name: temp_by_region
+description: >-
+  Gets the current air temperature for a location. The location MUST be given as
+  geographic coordinates: "latitude" and "longitude" in decimal degrees. When the
+  user names a place (e.g. "Seoul", "서울", "New York"), convert it to that place's
+  approximate latitude and longitude before calling (e.g. Seoul ≈ 37.5665, 126.978).
+  Returns the current temperature and its unit.
+endpoint: https://api.open-meteo.com/v1/forecast?current=temperature_2m
+method: GET
+transform: temperature
+parameters:
+  latitude:
+    type: number
+    description: >-
+      Latitude of the location in decimal degrees, e.g. 37.5665 for Seoul.
+    required: true
+    in: query
+  longitude:
+    type: number
+    description: >-
+      Longitude of the location in decimal degrees, e.g. 126.978 for Seoul.
+    required: true
+    in: query
+response_guidance: >-
+  기온 조회 결과를 사용자에게 전할 때는 반드시 한국어로 "현재 {지역}의 기온은 {temperature}{unit} 입니다." 형식으로
+  답하라. {지역}에는 사용자가 말한 표현(예: "서울", "뉴욕")을 그대로 쓰고, temperature와 unit 필드의 값을 그대로
+  채워라. 단위가 "°C"이면 "도"로 자연스럽게 표현해도 좋다.
