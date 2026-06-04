@@ -67,7 +67,7 @@ function loadConfig(): Config {
   // Default the allowlist to localhost:<PORT> (+ Open-Meteo for the built-in
   // temperature tool) once PORT is known.
   if (!data.TOOL_ENDPOINT_ALLOWLIST) {
-    data.TOOL_ENDPOINT_ALLOWLIST = `localhost:${data.PORT},api.open-meteo.com`;
+    data.TOOL_ENDPOINT_ALLOWLIST = `localhost:${data.PORT},api.open-meteo.com,api.geonames.org`;
   }
   return data;
 }

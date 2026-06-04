@@ -44,8 +44,9 @@ DATABASE_URL=              # required — remote PostgreSQL connection string
 OPENROUTER_API_KEY=        # required
 OPENROUTER_DEFAULT_MODEL=openai/gpt-4o-mini   # default
 CONVERSATION_WINDOW_SIZE=20                    # default — sliding window message count
-TOOL_ENDPOINT_ALLOWLIST=localhost:3000,api.open-meteo.com   # default localhost:<PORT>,api.open-meteo.com — comma-separated host:port allowlist for declarative tool endpoints
+TOOL_ENDPOINT_ALLOWLIST=localhost:3000,api.open-meteo.com,api.geonames.org   # default localhost:<PORT>,api.open-meteo.com,api.geonames.org — comma-separated host:port allowlist for declarative tool endpoints
 TOOL_VARS=                                     # optional JSON object of NON-SECRET {VAR} substitutions for declarative tools
+                                               # e.g. TOOL_VARS={"GEONAMES_USERNAME":"your_username"} for cities_by_country tool
 ```
 
 Copy `.env.example` to `.env` to start. The bot **auto-registers its own webhook** at startup via `bot.api.setWebhook(...)` — `WEBHOOK_URL` must be publicly reachable before running.
@@ -113,7 +114,7 @@ src/
 │   ├── loader.ts       # buildToolFromSpec() + loadToolDefs() — declarative .yaml tools
 │   ├── index.ts        # Registers code tools, then loadToolDefs() → add a tool here
 │   ├── echo.ts         # Example code tool (dev/test only)
-│   ├── defs/           # Declarative .yaml tool definitions (e.g. time_by_region.yaml, temp_by_region.yaml)
+│   ├── defs/           # Declarative .yaml tool definitions (e.g. time_by_region.yaml, temp_by_region.yaml, cities_by_country.yaml)
 │   └── transforms/     # Optional response transforms (default export (data)=>unknown)
 ├── services/
 │   ├── user.ts         # getOrCreateUser, isUserAllowed
@@ -191,12 +192,16 @@ parameters:                   # flat map paramName -> spec
 response:
   pick: [region, datetime]    # optional response field whitelist
 transform: time               # optional; module in src/tools/transforms/ (no extension)
+optional: true                # optional; if true, load failure only warns instead of process.exit(1)
+                              # use when the tool requires an external account (e.g. GEONAMES_USERNAME)
 response_guidance: >-         # optional; injected as a system message after the tool
   How the LLM should phrase the final answer using the tool's result.
 ```
 
 Restart to load (`.yaml` and `.yml` are both picked up). Any parse/validation error
-logs the offending file and exits the process.
+logs the offending file and exits the process. Mark a tool `optional: true` to
+downgrade load failures to warnings (e.g. when the tool needs a `TOOL_VARS` key like
+`GEONAMES_USERNAME` that may not be set).
 
 **Transforms** — for value reshaping that needs real code (e.g. reformatting an ISO
 datetime), create `src/tools/transforms/<name>.ts` with a default export
@@ -206,7 +211,7 @@ the HTTP response is parsed (and after `response.pick`, if set).
 **Security / allowlist (enforced by the loader):**
 - The endpoint host:port (after `{VAR}` substitution AND after runtime param
   substitution) must be in `TOOL_ENDPOINT_ALLOWLIST` (comma-separated, default
-  `localhost:<PORT>`). Non-http(s) schemes and URLs with embedded credentials are rejected.
+  `localhost:<PORT>,api.open-meteo.com,api.geonames.org`). Non-http(s) schemes and URLs with embedded credentials are rejected.
 - `{VAR}` tokens resolve ONLY from the secret-safe substitution allowlist
   (`getToolSubstitutionVars()` → `{ PORT, ...TOOL_VARS }`). An unknown token fails at
   load time — secrets like `OPENROUTER_API_KEY` are never substitutable.

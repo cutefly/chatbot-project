@@ -42,6 +42,7 @@ export const frontmatterSchema = z
     response: z.object({ pick: z.array(z.string()).min(1) }).strict().optional(),
     transform: z.string().min(1).optional(),
     response_guidance: z.string().min(1).optional(),
+    optional: z.boolean().default(false),
   })
   .strict();
 
@@ -278,15 +279,20 @@ export function loadToolDefs(registry: ToolRegistry): void {
   }
 
   for (const file of files) {
+    let spec: ToolSpec | undefined;
     try {
       const raw = readFileSync(join(defsDir, file), 'utf-8');
-      const spec = frontmatterSchema.parse(parseYaml(raw));
+      spec = frontmatterSchema.parse(parseYaml(raw));
       const tool = buildToolFromSpec(spec, { allowlist, vars });
       registry.register(tool);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`Failed to load tool definition "${file}": ${message}`);
-      process.exit(1);
+      if (spec?.optional) {
+        console.warn(`Skipping optional tool definition "${file}": ${message}`);
+      } else {
+        console.error(`Failed to load tool definition "${file}": ${message}`);
+        process.exit(1);
+      }
     }
   }
 }

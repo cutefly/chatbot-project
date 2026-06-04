@@ -1,0 +1,23 @@
+name: cities_by_country
+description: >-
+  Gets the top 10 most populous cities in a given country. The country MUST be
+  given as an ISO 3166-1 alpha-2 country code (two uppercase letters). When the
+  user names a country (e.g. "한국", "Japan", "프랑스"), convert it to the
+  corresponding ISO code before calling (e.g. 한국→KR, Japan→JP, 프랑스→FR).
+  Returns the country name and a list of city names ordered by population.
+endpoint: http://api.geonames.org/searchJSON?featureClass=P&orderby=population&maxRows=10&username={GEONAMES_USERNAME}
+method: GET
+optional: true
+transform: cities
+parameters:
+  country:
+    type: string
+    description: >-
+      ISO 3166-1 alpha-2 country code, e.g. "KR" for South Korea, "JP" for
+      Japan, "US" for the United States.
+    required: true
+    in: query
+response_guidance: >-
+  도시 조회 결과를 사용자에게 전할 때는 반드시 한국어로 "{country}의 주요 도시 목록입니다:" 이후 도시 이름만
+  줄바꿈 목록(- 도시명)으로 나열하라. 부가 설명 없이 도시 이름만 표시한다.
+  country 필드는 영문 국가명이므로 사용자가 말한 표현(예: "한국", "일본")으로 자연스럽게 바꿔 써도 좋다.
