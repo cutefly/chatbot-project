@@ -1,7 +1,7 @@
 # Application Architecture Diagram
 
 > **현행화 규칙**: 소스코드 변경 시 이 파일도 함께 수정합니다.  
-> 마지막 업데이트: 2026-06-05 | 기준 커밋: `(pending)`
+> 마지막 업데이트: 2026-06-05 | 기준 커밋: `527603d`
 
 Mermaid 다이어그램은 GitHub, GitLab, VSCode(Markdown Preview Mermaid Support 확장) 등에서 렌더링됩니다.
 
