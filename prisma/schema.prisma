@@ -43,3 +43,20 @@ enum Role {
   system
   tool
 }
+
+model MenuItem {
+  id              Int        @id @default(autoincrement())
+  label           String
+  parentId        Int?
+  parent          MenuItem?  @relation("MenuTree", fields: [parentId], references: [id])
+  children        MenuItem[] @relation("MenuTree")
+  sortOrder       Int        @default(0)
+  isActive        Boolean    @default(true)
+  actionType      String
+  actionValue     String     @default("")
+  resultSubmenuId Int?
+  resultSubmenu   MenuItem?  @relation("ResultSubmenu", fields: [resultSubmenuId], references: [id])
+  resultSubmenuOf MenuItem[] @relation("ResultSubmenu")
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
