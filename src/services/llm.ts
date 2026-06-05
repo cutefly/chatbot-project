@@ -44,7 +44,10 @@ export async function chat(model: string, messages: LLMMessage[]): Promise<strin
       const results = await executeToolCalls(choice.message.tool_calls);
       currentMessages.push(...results);
 
-      for (const guidance of collectGuidance(choice.message.tool_calls)) {
+      const successfulCalls = choice.message.tool_calls.filter(
+        (call, i) => !results[i].isError,
+      );
+      for (const guidance of collectGuidance(successfulCalls)) {
         currentMessages.push({ role: 'system', content: guidance });
       }
     } else {

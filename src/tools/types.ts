@@ -24,8 +24,25 @@ export interface ToolCall {
   };
 }
 
+/** Single content block — mirrors MCP content block shape. */
+export interface ToolContent {
+  type: 'text';
+  text: string;
+}
+
+/**
+ * Structured tool call result (MCP-aligned).
+ * isError distinguishes a tool-execution failure from a successful payload —
+ * the LLM uses this to decide how to respond rather than inspecting the payload shape.
+ */
+export interface ToolCallResult {
+  content: ToolContent[];
+  isError: boolean;
+}
+
 export interface ToolResult {
   tool_call_id: string;
   role: 'tool';
-  content: string; // JSON-encoded result
+  content: string; // JSON-serialised ToolCallResult — string for OpenRouter compatibility
+  isError: boolean;
 }

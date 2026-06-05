@@ -1,7 +1,7 @@
 # Application Architecture Diagram
 
 > **현행화 규칙**: 소스코드 변경 시 이 파일도 함께 수정합니다.  
-> 마지막 업데이트: 2026-06-05 | 기준 커밋: `caea156`
+> 마지막 업데이트: 2026-06-05 | 기준 커밋: `(pending)`
 
 Mermaid 다이어그램은 GitHub, GitLab, VSCode(Markdown Preview Mermaid Support 확장) 등에서 렌더링됩니다.
 
@@ -117,8 +117,8 @@ sequenceDiagram
             EX->>TR: toolRegistry.get(name)
             EX->>EX: tool.execute(args) [병렬 Promise.all]
             Note over EX: 아래 툴 실행 상세 참조
-            EX-->>LLM: ToolResult[]
-            LLM->>LLM: collectGuidance() → system 메시지 추가
+            EX-->>LLM: ToolResult[] (각각 isError 플래그 포함)
+            LLM->>LLM: collectGuidance(isError=false인 calls만) → system 메시지 추가
             LLM->>LLM: 다음 반복 (callOpenRouter)
         else finish_reason = "stop"
             LLM-->>MH: finalResponse (string)
@@ -171,8 +171,14 @@ sequenceDiagram
         TF-->>LD: { region, datetime: "2026-06-04 10:00:00", timezone }
     end
 
-    LD-->>EX: result (unknown)
-    EX-->>EX: JSON.stringify(result) → ToolResult.content
+    alt 성공
+        LD-->>EX: result (unknown)
+        EX-->>EX: ToolCallResult { content:[{type:'text',text:JSON}], isError:false }
+    else 실패 (throw)
+        LD-->>EX: throws Error
+        EX-->>EX: ToolCallResult { content:[{type:'text',text:message}], isError:true }
+    end
+    EX-->>EX: toToolResult() → ToolResult { content:JSON, isError, role:'tool', tool_call_id }
 ```
 
 ---
