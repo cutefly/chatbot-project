@@ -1,7 +1,7 @@
 # Application Architecture Diagram
 
 > **현행화 규칙**: 소스코드 변경 시 이 파일도 함께 수정합니다.  
-> 마지막 업데이트: 2026-06-05 | 기준 커밋: `(feature/implement-menus)`
+> 마지막 업데이트: 2026-06-05 | 기준 커밋: `46fc0ad` (feature/implement-menus)
 
 Mermaid 다이어그램은 GitHub, GitLab, VSCode(Markdown Preview Mermaid Support 확장) 등에서 렌더링됩니다.
 
@@ -61,6 +61,7 @@ sequenceDiagram
         end
     end
     M->>DB: prisma.$connect()
+    M->>DB: seedDefaultMenus() — MenuItem 없으면 기본 메뉴 트리 생성
     M->>B: createBot()
     B->>B: new Bot(TELEGRAM_BOT_TOKEN)
     B->>B: bot.use(whitelistMiddleware)
@@ -183,25 +184,29 @@ sequenceDiagram
 
 ---
 
-## 5. 콜백쿼리 처리 (/menu 버튼 탭)
+## 5. 콜백쿼리 처리 (버튼 탭 dispatch)
 
 ```mermaid
-sequenceDiagram
-    participant TG as Telegram
-    participant CQ as handlers/callbackQuery.ts
-    participant MC as config/menu.json
-    participant MH as handlers/message.ts
+flowchart TD
+    TG["Telegram callback_query:data"]
+    CQ["handlers/callbackQuery.ts"]
+    TG --> CQ
 
-    TG->>CQ: callback_query:data ("menu:item_id")
-    CQ->>CQ: data.startsWith("menu:") 확인
-    CQ->>MC: menuConfig.items.find(id === itemId)
-    alt 항목 없음
-        CQ-->>TG: answerCallbackQuery("항목을 찾을 수 없습니다.")
-    else 항목 있음
-        CQ-->>TG: answerCallbackQuery()
-        CQ->>MH: processMessage(ctx, item.prompt)
-        Note over MH: 일반 메시지와 동일한 LLM 파이프라인 실행
-    end
+    CQ --> P1{"prefix?"}
+
+    P1 -->|"menu:{id}"| M["handleMenuTap(id)"]
+    P1 -->|"result:{subId}:{value}"| R["handleResultTap(subId, value)"]
+    P1 -->|"action:{itemId}:{value}"| A["handleActionTap(itemId, value)"]
+    P1 -->|"legacy_menu:{id}"| L["handleLegacyMenu(id)\n← menu.json 하위호환"]
+
+    M --> MT{"actionType?"}
+    MT -->|submenu| MS["getChildren(id)\n→ InlineKeyboard"]
+    MT -->|tool| MT2["callToolPrompt(ctx, prompt)\n→ parseListFromLLMResponse()\n→ buildDynamicKeyboard(items, resultSubmenuId)\n→ reply with buttons"]
+    MT -->|prompt| MP["processMessage(ctx, actionValue)"]
+
+    R --> RS["getChildren(submenuId)\n→ buildActionKeyboard(children, value)\n→ reply '어떤 정보를 조회할까요?'"]
+
+    A --> AS["getMenuItemById(itemId)\n→ actionValue.replace({value}, value)\n→ processMessage(ctx, prompt)"]
 ```
 
 ---
@@ -213,7 +218,7 @@ flowchart LR
     BOT["grammy Bot"]
 
     BOT --> S["/start\nstartCommand\n→ 안내 메시지"]
-    BOT --> ME["/menu\nmenuCommand\n→ InlineKeyboard 생성\n(menu.json 기반)"]
+    BOT --> ME["/menu\nmenuCommand\n→ getRootMenuItems()\n→ InlineKeyboard (DB 기반)"]
     BOT --> RE["/reset\nresetCommand\n→ createConversation(userId)\n→ 새 Conversation 레코드"]
     BOT --> MO["/model model-id\nmodelCommand\n→ updateConversationModel(id, model)"]
     BOT --> MS["/models\nmodelsCommand\n→ CURATED_MODELS 목록 출력"]
@@ -249,9 +254,23 @@ erDiagram
         String content
         DateTime createdAt
     }
+    MenuItem {
+        Int id PK
+        String label
+        Int parentId FK
+        Int sortOrder
+        Boolean isActive
+        String actionType
+        String actionValue
+        Int resultSubmenuId FK
+        DateTime createdAt
+        DateTime updatedAt
+    }
 
     User ||--o{ Conversation : "has many"
     Conversation ||--o{ Message : "has many"
+    MenuItem ||--o{ MenuItem : "children (MenuTree)"
+    MenuItem ||--o{ MenuItem : "resultSubmenuOf"
 ```
 
 > `Role` enum: `user` | `assistant` | `system` | `tool`  

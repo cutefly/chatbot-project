@@ -2,7 +2,7 @@
 
 ## Project
 
-Node 24 + TypeScript 5 Telegram chatbot. Receives updates via **Fastify webhook** (not polling). Answers natural language by routing through **OpenRouter function calling** against a pluggable **ToolRegistry**. Persists users, conversations, and messages in **remote PostgreSQL** via Prisma.
+Node 24 + TypeScript 5 Telegram chatbot. Receives updates via **Fastify webhook** (not polling). Answers natural language by routing through **OpenRouter function calling** against a pluggable **ToolRegistry**. Persists users, conversations, messages, and **menu items** in **remote PostgreSQL** via Prisma.
 
 ---
 
@@ -77,7 +77,7 @@ Telegram ──HTTPS webhook──▶ Fastify (:3000/webhook)
                                 │
               ┌─────────────────┼──────────────────┐
         MessageHandler    CommandHandlers     CallbackQueryHandler
-              │                                     │ (menu items)
+              │                                     │ (menu/result/action)
               └─────────────────┬───────────────────┘
                                 │
                   ┌─────────────┴─────────────┐
@@ -86,15 +86,18 @@ Telegram ──HTTPS webhook──▶ Fastify (:3000/webhook)
                   │                       │
              Prisma ORM              ToolRegistry
                   │                  (pluggable)
-              PostgreSQL
+               PostgreSQL
+           (User, Conversation,
+            Message, MenuItem)
 ```
 
 **Startup order in `src/main.ts`:**
 1. `import './tools/index.js'` — registers all tools (**must be first import**)
 2. `prisma.$connect()` — exits process on failure
-3. `createBot()` → `createServer(bot)`
-4. `bot.api.setWebhook(...)` — registers webhook with Telegram
-5. `server.listen(...)` — starts Fastify
+3. `seedDefaultMenus()` — idempotent seed; creates default menu tree if `MenuItem` table is empty
+4. `createBot()` → `createServer(bot)`
+5. `bot.api.setWebhook(...)` — registers webhook with Telegram
+6. `server.listen(...)` — starts Fastify
 
 ---
 
@@ -104,11 +107,11 @@ Telegram ──HTTPS webhook──▶ Fastify (:3000/webhook)
 src/
 ├── config/
 │   ├── index.ts        # Zod env validation + menuConfig loader
-│   └── menu.json       # Menu button definitions (edit without code changes)
+│   └── menu.json       # Legacy menu button definitions (superseded by DB MenuItem)
 ├── db/
 │   └── client.ts       # Prisma singleton (globalThis pattern)
 ├── tools/
-│   ├── types.ts        # Tool / ToolCall / ToolResult interfaces
+│   ├── types.ts        # Tool / ToolCall / ToolResult / ToolContent interfaces
 │   ├── registry.ts     # ToolRegistry class + singleton export (register() throws on dup)
 │   ├── executor.ts     # executeToolCalls() — runs tool_calls in parallel
 │   ├── loader.ts       # buildToolFromSpec() + loadToolDefs() — declarative .yaml tools
@@ -119,7 +122,8 @@ src/
 ├── services/
 │   ├── user.ts         # getOrCreateUser, isUserAllowed
 │   ├── conversation.ts # getOrCreateActive, getWindow, saveMessages, updateConversationModel
-│   └── llm.ts          # chat() — OpenRouter + function-calling loop (max 5 iterations)
+│   ├── llm.ts          # chat() — OpenRouter + function-calling loop (max 5 iterations)
+│   └── menu.ts         # getRootMenuItems, getChildren, getMenuItemById, seedDefaultMenus
 ├── bot/
 │   ├── index.ts        # createBot() — wires all middleware/commands/handlers
 │   ├── middleware/
@@ -127,33 +131,46 @@ src/
 │   ├── commands/       # start, menu, reset, model, models, status
 │   └── handlers/
 │       ├── message.ts        # processMessage() — main LLM pipeline (also called by callbackQuery)
-│       └── callbackQuery.ts  # inline button tap → menu item prompt
+│       ├── callbackQuery.ts  # menu:/result:/action: prefix dispatch → DB MenuItem routing
+│       └── menuHelpers.ts    # parseListFromLLMResponse, buildDynamicKeyboard, callToolPrompt
 ├── server/
-│   └── index.ts        # Fastify + /webhook + /health
+│   └── index.ts        # Fastify + /webhook + /health + /api/get-time-by-region
 └── main.ts             # Entrypoint
 
 tests/
+├── bot/menuHelpers.test.ts
 ├── tools/registry.test.ts
+├── tools/executor.test.ts
+├── tools/loader.test.ts
+├── tools/time.test.ts
+├── tools/temperature.test.ts
+├── tools/cities.test.ts
 ├── services/conversation.test.ts
 ├── services/llm.test.ts
-└── middleware/whitelist.test.ts
+├── services/menu.test.ts
+├── middleware/whitelist.test.ts
+└── server/time.test.ts
 ```
 
 ---
 
 ## Database Schema
 
-Three models in `prisma/schema.prisma`:
+Four models in `prisma/schema.prisma`:
 
 - **`User`** — `telegramId` (BigInt, unique), `isAllowed` (whitelist flag, default `false`)
 - **`Conversation`** — per user, stores active `model` string; `/reset` creates a new one (old records preserved)
 - **`Message`** — role: `user | assistant | system | tool`, `content: Text`
+- **`MenuItem`** — hierarchical menu tree; see [Menu System](#menu-system) below
 
 **Active conversation** = latest `Conversation` by `createdAt DESC LIMIT 1` per user.  
 **Sliding window** = last N `Message` rows by `createdAt DESC` then reversed — all roles count toward N.
 
 After schema changes: `npm run db:migrate` (creates migration + regenerates client).  
 After pulling a migration someone else wrote: `npm run db:generate` to regenerate types only.
+
+> **Note:** The remote DB user may not have shadow DB privileges required by `prisma migrate dev`.  
+> Use `prisma db push` as a workaround: syncs schema directly without a shadow DB.
 
 ---
 
@@ -251,23 +268,70 @@ toolRegistry.register(yourTool);
 
 3. Restart. No other changes needed.
 
-**Tool errors:** `executor.ts` wraps failures in `{ error: "..." }` JSON and returns them to the LLM — the LLM explains the failure to the user. Tool errors do not crash the process.
+**Tool errors:** `executor.ts` wraps failures in `ToolCallResult { content, isError: true }` and returns them to the LLM — the LLM explains the failure to the user. Tool errors do not crash the process.
 
 ---
 
 ## Menu System
 
-`src/config/menu.json` — edit at runtime, server restart picks up changes:
+Menus are stored in **PostgreSQL** (`MenuItem` table) and support an n-depth hierarchical tree with dynamic, tool-driven items.
 
-```json
-{
-  "items": [
-    { "id": "unique_id", "label": "Button label", "prompt": "Prompt sent to LLM" }
-  ]
-}
+### MenuItem model
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | Int PK | Auto-increment |
+| `label` | String | Button display text |
+| `parentId` | Int? | `null` = root item |
+| `sortOrder` | Int | Display order within siblings |
+| `isActive` | Boolean | Hidden when `false` |
+| `actionType` | String | `submenu` \| `tool` \| `prompt` \| `action` |
+| `actionValue` | String | Depends on `actionType` (see below) |
+| `resultSubmenuId` | Int? | When `actionType=tool`: submenu shown after a dynamic result button is tapped |
+
+### actionType semantics
+
+| actionType | actionValue format | Behavior |
+|------------|-------------------|----------|
+| `submenu` | `""` | Show child MenuItems as inline keyboard buttons |
+| `tool` | `"toolName:arg"` e.g. `"cities_by_country:KR"` | Build a prompt → call LLM → tool executes → parse list from response → show as dynamic buttons. If `resultSubmenuId` set, each button leads to that submenu. |
+| `prompt` | plain text | Call `processMessage(ctx, actionValue)` directly |
+| `action` | text with `{value}` placeholder | Replace `{value}` with context (e.g. selected city), call `processMessage` |
+
+### callback_data protocol (Telegram 64-byte limit)
+
+| Format | Trigger | Handling |
+|--------|---------|----------|
+| `menu:{id}` | Static MenuItem tap | Look up MenuItem → dispatch on `actionType` |
+| `result:{submenuId}:{value}` | Dynamic result button tap | Show `getChildren(submenuId)` as action buttons with `value` as context |
+| `action:{menuItemId}:{value}` | Sub-action button tap | Substitute `{value}` in `actionValue` → `processMessage` |
+| `legacy_menu:{id}` | Old `menu.json` button tap | Backward compatibility |
+
+### Example flow: 국가 → 도시 → 기온/시간
+
+```
+/menu
+  └─ 🌍 지역 날씨/시간 조회  [submenu]
+       ├─ 🇰🇷 한국  [tool: cities_by_country:KR, resultSubmenuId=조회유형선택]
+       ├─ 🇯🇵 일본  [tool: cities_by_country:JP, resultSubmenuId=조회유형선택]
+       └─ 🇺🇸 미국  [tool: cities_by_country:US, resultSubmenuId=조회유형선택]
+            ↓ LLM이 cities_by_country 툴 호출 → 도시 목록 파싱
+       ├─ 서울  [result:조회유형선택ID:서울]
+       ├─ 부산  [result:조회유형선택ID:부산]
+       └─ ...
+            ↓ 선택 시 조회 유형 서브메뉴 표시
+       ├─ 🌡 기온 조회  [action: "{value}의 현재 기온을 알려줘"]
+       └─ 🕐 시간 조회  [action: "{value}의 현재 시간을 알려줘"]
+            ↓ {value}=서울 치환 후 processMessage → LLM 응답
 ```
 
-`/menu` shows inline keyboard buttons. Each tap calls `processMessage()` with the item's `prompt` — same LLM + function-calling pipeline as a normal text message.
+### Seed data
+
+`seedDefaultMenus()` in `src/services/menu.ts` runs at startup — idempotent (skips if any `MenuItem` exists). Seeds the above 국가→도시→기온/시간 tree as the default example.
+
+### Adding menu items
+
+Insert directly into the `MenuItem` table via SQL or any DB client — no code changes or restart required (items are loaded from DB on each `/menu` command).
 
 ---
 
@@ -302,3 +366,4 @@ toolRegistry.register(yourTool);
 - **Webhook secret validated on every request** in `src/server/index.ts` via `x-telegram-bot-api-secret-token` header
 - **`prisma generate` works offline** — only needs `prisma/schema.prisma`, no DB connection; `prisma migrate dev` needs a live DB
 - **`prisma migrate dev` also regenerates the client** — no need to run `db:generate` separately after a migration
+- **`prisma migrate dev` requires shadow DB privileges** — if the DB user cannot create databases, use `npx prisma db push` instead (syncs schema without a shadow DB, no migration history)
