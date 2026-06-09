@@ -2,6 +2,7 @@ import type { Context } from 'grammy';
 import { menuConfig } from '../../config/index.js';
 import { processMessage } from './message.js';
 import { getMenuItemById, getChildren } from '../../services/menu.js';
+import { logger } from '../../logger.js';
 import {
   parseListFromLLMResponse,
   buildDynamicKeyboard,
@@ -13,22 +14,29 @@ export async function callbackQueryHandler(ctx: Context): Promise<void> {
   const data = ctx.callbackQuery?.data;
   if (!data) return;
 
+  const userId = ctx.from?.id;
+  const userTag = ctx.from?.username ? `@${ctx.from.username}` : `id:${userId}`;
+
   if (data.startsWith('menu:')) {
+    logger.info(`Menu tap`, { user: userTag, data });
     await handleMenuTap(ctx, data.slice(5));
     return;
   }
 
   if (data.startsWith('result:')) {
+    logger.info(`Result tap`, { user: userTag, data });
     await handleResultTap(ctx, data.slice(7));
     return;
   }
 
   if (data.startsWith('action:')) {
+    logger.info(`Action tap`, { user: userTag, data });
     await handleActionTap(ctx, data.slice(7));
     return;
   }
 
   if (data.startsWith('legacy_menu:')) {
+    logger.info(`Legacy menu tap`, { user: userTag, data });
     await handleLegacyMenu(ctx, data.slice(12));
     return;
   }
@@ -85,7 +93,8 @@ async function handleMenuTap(ctx: Context, idStr: string): Promise<void> {
         } else {
           await ctx.reply(response);
         }
-      } catch {
+      } catch (error) {
+        logger.error(`Menu tool call failed`, { item: item.actionValue, error: String(error) });
         await ctx.reply('조회 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
       }
       return;

@@ -9,14 +9,23 @@ const logsDir = join(__dirname, '..', 'logs');
 
 mkdirSync(logsDir, { recursive: true });
 
-const timestampFormat = winston.format.timestamp({
-  format: 'YYYY-MM-DD HH:mm:ss',
-});
+const TIMESTAMP = 'YYYY-MM-DD HH:mm:ss';
 
-const lineFormat = winston.format.printf(({ timestamp, level, message, ...meta }) => {
-  const metaStr = Object.keys(meta).length ? ' ' + JSON.stringify(meta) : '';
-  return `${timestamp} [${level.toUpperCase()}] ${message}${metaStr}`;
-});
+const fileFormat = winston.format.combine(
+  winston.format.timestamp({ format: TIMESTAMP }),
+  winston.format.printf(({ timestamp, level, message, ...meta }) => {
+    const metaStr = Object.keys(meta).length ? ' ' + JSON.stringify(meta) : '';
+    return `${timestamp} [${level.toUpperCase()}] ${message}${metaStr}`;
+  }),
+);
+
+const consoleFormat = winston.format.combine(
+  winston.format.timestamp({ format: TIMESTAMP }),
+  winston.format.printf(({ timestamp, level, message, ...meta }) => {
+    const metaStr = Object.keys(meta).length ? ' ' + JSON.stringify(meta) : '';
+    return `${timestamp} [${level.toUpperCase()}] ${message}${metaStr}`;
+  }),
+);
 
 const fileTransport = new DailyRotateFile({
   dirname: logsDir,
@@ -26,15 +35,11 @@ const fileTransport = new DailyRotateFile({
   datePattern: 'YYYY-MM-DD',
   frequency: '24h',
   maxFiles: '30d',
-  format: winston.format.combine(timestampFormat, lineFormat),
+  format: fileFormat,
 });
 
 const consoleTransport = new winston.transports.Console({
-  format: winston.format.combine(
-    timestampFormat,
-    winston.format.colorize({ level: true }),
-    lineFormat,
-  ),
+  format: consoleFormat,
 });
 
 export const logger = winston.createLogger({

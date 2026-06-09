@@ -1,6 +1,7 @@
 import { config } from '../config/index.js';
 import { toolRegistry } from '../tools/index.js';
 import { executeToolCalls } from '../tools/executor.js';
+import { logger } from '../logger.js';
 import type { ToolCall } from '../tools/types.js';
 
 interface LLMMessage {
@@ -30,11 +31,16 @@ export async function chat(model: string, messages: LLMMessage[]): Promise<strin
   const tools = toolRegistry.toFunctionDefinitions();
   let currentMessages: LLMMessage[] = [...messages];
 
+  logger.info(`LLM call started`, { model, tools: tools.map(t => t.function.name) });
+
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const response = await callOpenRouter(model, currentMessages, tools);
     const choice = response.choices[0];
 
     if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {
+      const toolNames = choice.message.tool_calls.map(c => c.function.name);
+      logger.info(`Tool calls requested`, { tools: toolNames, iteration: i + 1 });
+
       currentMessages.push({
         role: 'assistant',
         content: choice.message.content,
@@ -51,7 +57,9 @@ export async function chat(model: string, messages: LLMMessage[]): Promise<strin
         currentMessages.push({ role: 'system', content: guidance });
       }
     } else {
-      return choice.message.content ?? '';
+      const content = choice.message.content ?? '';
+      logger.info(`LLM call completed`, { model, iterations: i + 1, responseLength: content.length });
+      return content;
     }
   }
 

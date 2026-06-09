@@ -31,11 +31,18 @@ export async function createServer(bot: Bot) {
   app.post('/webhook', async (req, reply) => {
     const secret = req.headers['x-telegram-bot-api-secret-token'];
     if (secret !== config.TELEGRAM_WEBHOOK_SECRET) {
-      logger.warn('Webhook request rejected: invalid secret token');
+      logger.warn('Webhook rejected: invalid secret token', {
+        ip: req.headers['x-forwarded-for'] ?? req.ip,
+      });
       reply.code(401);
       return { error: 'Unauthorized' };
     }
-    logger.info('Webhook update received');
+
+    const body = req.body as Record<string, unknown> | undefined;
+    const updateType = body ? Object.keys(body).filter(k => k !== 'update_id')[0] : 'unknown';
+    const updateId = (body?.update_id as number | undefined) ?? '-';
+    logger.info(`Webhook update received`, { updateId, type: updateType });
+
     return handleUpdate(req, reply);
   });
 
