@@ -3,14 +3,13 @@ import { webhookCallback } from 'grammy';
 import type { Bot } from 'grammy';
 import { config } from '../config/index.js';
 import { buildZonedIso, isValidTimeZone } from './time.js';
+import { logger } from '../logger.js';
 
 export async function createServer(bot: Bot) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: false });
 
-  // grammy webhook handler — created once, reused per request
   const handleUpdate = webhookCallback(bot, 'fastify');
 
-  // Health check
   app.get('/health', async () => ({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -29,13 +28,14 @@ export async function createServer(bot: Bot) {
     };
   });
 
-  // Telegram webhook — validates secret token before passing to grammy
   app.post('/webhook', async (req, reply) => {
     const secret = req.headers['x-telegram-bot-api-secret-token'];
     if (secret !== config.TELEGRAM_WEBHOOK_SECRET) {
+      logger.warn('Webhook request rejected: invalid secret token');
       reply.code(401);
       return { error: 'Unauthorized' };
     }
+    logger.info('Webhook update received');
     return handleUpdate(req, reply);
   });
 

@@ -64,9 +64,27 @@ Copy `.env.example` to `.env` to start. The bot **auto-registers its own webhook
    UPDATE "User" SET "isAllowed" = true WHERE "telegramId" = <your_telegram_id>;
    ```
 
----
+## Logging
 
-## Architecture
+Log files are written to `./logs/` using **winston** + `winston-daily-rotate-file`.
+
+| File | Description |
+|------|-------------|
+| `logs/chatbot-project.log` | Symlink → today's log file. Use for `tail -f` monitoring. |
+| `logs/chatbot-project-YYYY-MM-DD.log` | Date-stamped actual file. Rotated daily at midnight. Kept for 30 days. |
+
+**Format:** `YYYY-MM-DD HH:mm:ss [LEVEL] message`  
+**Levels:** INFO, WARN, ERROR  
+**Rotation:** New file created at 00:00 (server timezone). Previous day's file is preserved with its date suffix.
+
+```bash
+tail -f logs/chatbot-project.log          # live monitoring
+cat logs/chatbot-project-2026-06-05.log   # specific day
+```
+
+The `logs/` directory is gitignored. It is created automatically on first run.
+
+---
 
 ```
 Telegram ──HTTPS webhook──▶ Fastify (:3000/webhook)
@@ -110,6 +128,7 @@ src/
 │   └── menu.json       # Legacy menu button definitions (superseded by DB MenuItem)
 ├── db/
 │   └── client.ts       # Prisma singleton (globalThis pattern)
+├── logger.ts           # winston logger (file rotation + console)
 ├── tools/
 │   ├── types.ts        # Tool / ToolCall / ToolResult / ToolContent interfaces
 │   ├── registry.ts     # ToolRegistry class + singleton export (register() throws on dup)
