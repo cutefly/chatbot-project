@@ -6,6 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import type { Tool, JSONSchema } from './types.js';
 import type { ToolRegistry } from './registry.js';
 import { getToolSubstitutionVars, config } from '../config/index.js';
+import { logger } from '../logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -275,6 +276,12 @@ export function loadToolDefs(registry: ToolRegistry): void {
   try {
     files = readdirSync(defsDir).filter((f) => f.endsWith('.yaml') || f.endsWith('.yml'));
   } catch {
+    logger.warn('Tool defs directory not found — no declarative tools loaded', { defsDir });
+    return;
+  }
+
+  if (files.length === 0) {
+    logger.warn('No .yaml/.yml files found in tool defs directory', { defsDir });
     return;
   }
 
@@ -285,12 +292,13 @@ export function loadToolDefs(registry: ToolRegistry): void {
       spec = frontmatterSchema.parse(parseYaml(raw));
       const tool = buildToolFromSpec(spec, { allowlist, vars });
       registry.register(tool);
+      logger.info(`Tool loaded: ${tool.name}`, { file });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (spec?.optional) {
-        console.warn(`Skipping optional tool definition "${file}": ${message}`);
+        logger.warn(`Skipping optional tool definition "${file}"`, { reason: message });
       } else {
-        console.error(`Failed to load tool definition "${file}": ${message}`);
+        logger.error(`Failed to load tool definition "${file}"`, { reason: message });
         process.exit(1);
       }
     }

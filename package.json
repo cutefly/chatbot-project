@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --env-file=.env src/main.ts",
-    "build": "tsc",
+    "build": "tsc && node -e \"const{cpSync}=require('fs');cpSync('src/tools/defs','dist/tools/defs',{recursive:true})\"",
     "start": "node --env-file=.env dist/main.js",
     "test": "vitest run",
     "test:watch": "vitest",
