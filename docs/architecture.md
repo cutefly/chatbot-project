@@ -1,7 +1,7 @@
 # Application Architecture Diagram
 
 > **현행화 규칙**: 소스코드 변경 시 이 파일도 함께 수정합니다.  
-> 마지막 업데이트: 2026-06-05 | 기준 커밋: `527603d`
+> 마지막 업데이트: 2026-06-05 | 기준 커밋: `46fc0ad` (feature/implement-menus)
 
 Mermaid 다이어그램은 GitHub, GitLab, VSCode(Markdown Preview Mermaid Support 확장) 등에서 렌더링됩니다.
 
@@ -61,6 +61,7 @@ sequenceDiagram
         end
     end
     M->>DB: prisma.$connect()
+    M->>DB: seedDefaultMenus() — MenuItem 없으면 기본 메뉴 트리 생성
     M->>B: createBot()
     B->>B: new Bot(TELEGRAM_BOT_TOKEN)
     B->>B: bot.use(whitelistMiddleware)
@@ -183,25 +184,29 @@ sequenceDiagram
 
 ---
 
-## 5. 콜백쿼리 처리 (/menu 버튼 탭)
+## 5. 콜백쿼리 처리 (버튼 탭 dispatch)
 
 ```mermaid
-sequenceDiagram
-    participant TG as Telegram
-    participant CQ as handlers/callbackQuery.ts
-    participant MC as config/menu.json
-    participant MH as handlers/message.ts
+flowchart TD
+    TG["Telegram callback_query:data"]
+    CQ["handlers/callbackQuery.ts"]
+    TG --> CQ
 
-    TG->>CQ: callback_query:data ("menu:item_id")
-    CQ->>CQ: data.startsWith("menu:") 확인
-    CQ->>MC: menuConfig.items.find(id === itemId)
-    alt 항목 없음
-        CQ-->>TG: answerCallbackQuery("항목을 찾을 수 없습니다.")
-    else 항목 있음
-        CQ-->>TG: answerCallbackQuery()
-        CQ->>MH: processMessage(ctx, item.prompt)
-        Note over MH: 일반 메시지와 동일한 LLM 파이프라인 실행
-    end
+    CQ --> P1{"prefix?"}
+
+    P1 -->|"menu:{id}"| M["handleMenuTap(id)"]
+    P1 -->|"result:{subId}:{value}"| R["handleResultTap(subId, value)"]
+    P1 -->|"action:{itemId}:{value}"| A["handleActionTap(itemId, value)"]
+    P1 -->|"legacy_menu:{id}"| L["handleLegacyMenu(id)\n← menu.json 하위호환"]
+
+    M --> MT{"actionType?"}
+    MT -->|submenu| MS["getChildren(id)\n→ InlineKeyboard"]
+    MT -->|tool| MT2["callToolPrompt(ctx, prompt)\n→ parseListFromLLMResponse()\n→ buildDynamicKeyboard(items, resultSubmenuId)\n→ reply with buttons"]
+    MT -->|prompt| MP["processMessage(ctx, actionValue)"]
+
+    R --> RS["getChildren(submenuId)\n→ buildActionKeyboard(children, value)\n→ reply '어떤 정보를 조회할까요?'"]
+
+    A --> AS["getMenuItemById(itemId)\n→ actionValue.replace({value}, value)\n→ processMessage(ctx, prompt)"]
 ```
 
 ---
@@ -213,7 +218,7 @@ flowchart LR
     BOT["grammy Bot"]
 
     BOT --> S["/start\nstartCommand\n→ 안내 메시지"]
-    BOT --> ME["/menu\nmenuCommand\n→ InlineKeyboard 생성\n(menu.json 기반)"]
+    BOT --> ME["/menu\nmenuCommand\n→ getRootMenuItems()\n→ InlineKeyboard (DB 기반)"]
     BOT --> RE["/reset\nresetCommand\n→ createConversation(userId)\n→ 새 Conversation 레코드"]
     BOT --> MO["/model model-id\nmodelCommand\n→ updateConversationModel(id, model)"]
     BOT --> MS["/models\nmodelsCommand\n→ CURATED_MODELS 목록 출력"]
@@ -249,9 +254,23 @@ erDiagram
         String content
         DateTime createdAt
     }
+    MenuItem {
+        Int id PK
+        String label
+        Int parentId FK
+        Int sortOrder
+        Boolean isActive
+        String actionType
+        String actionValue
+        Int resultSubmenuId FK
+        DateTime createdAt
+        DateTime updatedAt
+    }
 
     User ||--o{ Conversation : "has many"
     Conversation ||--o{ Message : "has many"
+    MenuItem ||--o{ MenuItem : "children (MenuTree)"
+    MenuItem ||--o{ MenuItem : "resultSubmenuOf"
 ```
 
 > `Role` enum: `user` | `assistant` | `system` | `tool`  
@@ -367,4 +386,92 @@ graph LR
     cs --> db
     cs --> cfg
     db --> cfg
+    ms["services/menu.ts"] --> db
+    cq --> ms
+    cq --> mh2["handlers/menuHelpers.ts"]
+    mh2 --> ls
+    mh2 --> us
+    mh2 --> cs
 ```
+
+---
+
+## 10. 동적 계층형 메뉴 시스템 (feature/implement-menus)
+
+```mermaid
+sequenceDiagram
+    participant TG as Telegram
+    participant CQ as handlers/callbackQuery.ts
+    participant MS as services/menu.ts
+    participant MH as handlers/menuHelpers.ts
+    participant LLM as services/llm.ts
+    participant DB as PostgreSQL (MenuItem)
+
+    Note over TG,DB: /menu 명령어
+    TG->>CQ: /menu
+    CQ->>MS: getRootMenuItems()
+    MS->>DB: findMany(parentId=null, isActive=true)
+    DB-->>MS: MenuItem[]
+    CQ-->>TG: InlineKeyboard (menu:{id} per item)
+
+    Note over TG,DB: 정적 서브메뉴 탭 (menu:{id}, actionType=submenu)
+    TG->>CQ: callback menu:1
+    CQ->>MS: getMenuItemById(1)
+    CQ->>MS: getChildren(1)
+    MS->>DB: findMany(parentId=1)
+    CQ-->>TG: InlineKeyboard (자식 항목 버튼)
+
+    Note over TG,DB: Tool 항목 탭 (menu:{id}, actionType=tool)
+    TG->>CQ: callback menu:2  (한국, cities_by_country:KR)
+    CQ->>MS: getMenuItemById(2)
+    CQ->>MH: callToolPrompt(ctx, "cities_by_country 도구로 KR 조회해줘")
+    MH->>LLM: chat(model, messages)
+    LLM-->>MH: "한국의 주요 도시 목록입니다:\n- 서울\n- 부산..."
+    CQ->>MH: parseListFromLLMResponse(response)
+    MH-->>CQ: ["서울", "부산", "인천", ...]
+    CQ->>MH: buildDynamicKeyboard(items, resultSubmenuId)
+    CQ-->>TG: LLM 응답 텍스트 + 동적 버튼 (result:{submenuId}:{city})
+
+    Note over TG,DB: 동적 결과 버튼 탭 (result:{submenuId}:{value})
+    TG->>CQ: callback result:5:서울
+    CQ->>MS: getChildren(5)  [조회 유형 선택 서브메뉴]
+    MS->>DB: findMany(parentId=5)
+    CQ->>MH: buildActionKeyboard(children, "서울")
+    CQ-->>TG: "서울 — 어떤 정보를 조회할까요?" + 버튼 (action:{id}:서울)
+
+    Note over TG,DB: 액션 버튼 탭 (action:{menuItemId}:{value})
+    TG->>CQ: callback action:6:서울  (기온 조회)
+    CQ->>MS: getMenuItemById(6)
+    MS-->>CQ: actionValue = "{value}의 현재 기온을 알려줘"
+    CQ->>CQ: substitute {value} → "서울의 현재 기온을 알려줘"
+    CQ->>MH: processMessage(ctx, "서울의 현재 기온을 알려줘")
+    MH->>LLM: chat() → temp_by_region tool 호출
+    LLM-->>TG: "현재 서울의 기온은 20.5도 입니다."
+```
+
+## 11. MenuItem 데이터 모델
+
+```mermaid
+erDiagram
+    MenuItem {
+        Int id PK
+        String label
+        Int parentId FK
+        Int sortOrder
+        Boolean isActive
+        String actionType
+        String actionValue
+        Int resultSubmenuId FK
+        DateTime createdAt
+        DateTime updatedAt
+    }
+
+    MenuItem ||--o{ MenuItem : "children (MenuTree)"
+    MenuItem ||--o{ MenuItem : "resultSubmenuOf (ResultSubmenu)"
+```
+
+> `actionType` 값:
+> - `submenu` — 자식 MenuItem을 키보드로 표시
+> - `tool` — `actionValue` 파싱 후 LLM+툴 호출, 결과를 동적 버튼으로 표시
+> - `prompt` — `actionValue`를 직접 processMessage에 전달
+> - `action` — `{value}` 치환 후 processMessage에 전달 (동적 결과 탭 후 사용)

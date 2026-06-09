@@ -1,16 +1,17 @@
-// Register all tools before anything else
 import './tools/index.js';
 
 import { prisma } from './db/client.js';
 import { config } from './config/index.js';
 import { createBot } from './bot/index.js';
 import { createServer } from './server/index.js';
+import { seedDefaultMenus } from './services/menu.js';
 
 async function main() {
   // Verify database connectivity at startup
   try {
     await prisma.$connect();
     console.log('✅ Database connected');
+    await seedDefaultMenus();
   } catch (error) {
     console.error('❌ Database connection failed:', error);
     process.exit(1);
