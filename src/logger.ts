@@ -7,11 +7,9 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const logsDir = join(__dirname, '..', 'logs');
 
-mkdirSync(logsDir, { recursive: true });
-
 const TIMESTAMP = 'YYYY-MM-DD HH:mm:ss';
 
-const fileFormat = winston.format.combine(
+const lineFormat = winston.format.combine(
   winston.format.timestamp({ format: TIMESTAMP }),
   winston.format.printf(({ timestamp, level, message, ...meta }) => {
     const metaStr = Object.keys(meta).length ? ' ' + JSON.stringify(meta) : '';
@@ -19,30 +17,30 @@ const fileFormat = winston.format.combine(
   }),
 );
 
-const consoleFormat = winston.format.combine(
-  winston.format.timestamp({ format: TIMESTAMP }),
-  winston.format.printf(({ timestamp, level, message, ...meta }) => {
-    const metaStr = Object.keys(meta).length ? ' ' + JSON.stringify(meta) : '';
-    return `${timestamp} [${level.toUpperCase()}] ${message}${metaStr}`;
-  }),
-);
+const isTest = process.env.NODE_ENV === 'test';
 
-const fileTransport = new DailyRotateFile({
-  dirname: logsDir,
-  filename: 'chatbot-project-%DATE%.log',
-  symlinkName: 'chatbot-project.log',
-  createSymlink: true,
-  datePattern: 'YYYY-MM-DD',
-  frequency: '24h',
-  maxFiles: '30d',
-  format: fileFormat,
-});
+const transports: winston.transport[] = [];
 
-const consoleTransport = new winston.transports.Console({
-  format: consoleFormat,
-});
+if (!isTest) {
+  mkdirSync(logsDir, { recursive: true });
+
+  transports.push(
+    new winston.transports.Console({ format: lineFormat }),
+    new DailyRotateFile({
+      dirname: logsDir,
+      filename: 'chatbot-project-%DATE%.log',
+      symlinkName: 'chatbot-project.log',
+      createSymlink: true,
+      datePattern: 'YYYY-MM-DD',
+      frequency: '24h',
+      maxFiles: '30d',
+      format: lineFormat,
+    }),
+  );
+}
 
 export const logger = winston.createLogger({
   level: 'info',
-  transports: [consoleTransport, fileTransport],
+  transports,
+  silent: isTest,
 });
