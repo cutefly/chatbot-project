@@ -18,7 +18,13 @@ async function main() {
   }
 
   const bot = createBot();
+  // grammy retries a failing getMe forever, so bot.init() can hang instead of throwing.
+  const initWatchdog = setTimeout(() => {
+    logger.error('Fatal error', { error: 'bot.init() timed out — Telegram API unreachable' });
+    process.exit(1);
+  }, 15_000);
   await bot.init();
+  clearTimeout(initWatchdog);
   const server = await createServer(bot);
 
   await bot.api.setWebhook(`${config.WEBHOOK_URL}/webhook`, {
