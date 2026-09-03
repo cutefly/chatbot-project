@@ -17,31 +17,36 @@ export async function callbackQueryHandler(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const userTag = ctx.from?.username ? `@${ctx.from.username}` : `id:${userId}`;
 
-  if (data.startsWith('menu:')) {
-    logger.info(`Menu tap`, { user: userTag, data });
-    await handleMenuTap(ctx, data.slice(5));
-    return;
-  }
+  try {
+    if (data.startsWith('menu:')) {
+      logger.info(`Menu tap`, { user: userTag, data });
+      await handleMenuTap(ctx, data.slice(5));
+      return;
+    }
 
-  if (data.startsWith('result:')) {
-    logger.info(`Result tap`, { user: userTag, data });
-    await handleResultTap(ctx, data.slice(7));
-    return;
-  }
+    if (data.startsWith('result:')) {
+      logger.info(`Result tap`, { user: userTag, data });
+      await handleResultTap(ctx, data.slice(7));
+      return;
+    }
 
-  if (data.startsWith('action:')) {
-    logger.info(`Action tap`, { user: userTag, data });
-    await handleActionTap(ctx, data.slice(7));
-    return;
-  }
+    if (data.startsWith('action:')) {
+      logger.info(`Action tap`, { user: userTag, data });
+      await handleActionTap(ctx, data.slice(7));
+      return;
+    }
 
-  if (data.startsWith('legacy_menu:')) {
-    logger.info(`Legacy menu tap`, { user: userTag, data });
-    await handleLegacyMenu(ctx, data.slice(12));
-    return;
-  }
+    if (data.startsWith('legacy_menu:')) {
+      logger.info(`Legacy menu tap`, { user: userTag, data });
+      await handleLegacyMenu(ctx, data.slice(12));
+      return;
+    }
 
-  await ctx.answerCallbackQuery();
+    await ctx.answerCallbackQuery();
+  } catch (error) {
+    logger.error(`Callback query failed`, { user: userTag, data, error: String(error) });
+    await ctx.reply('잠시 후 다시 시도해주세요. 🙏').catch(() => undefined);
+  }
 }
 
 async function handleMenuTap(ctx: Context, idStr: string): Promise<void> {
