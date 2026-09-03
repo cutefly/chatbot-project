@@ -18,6 +18,7 @@ async function main() {
   }
 
   const bot = createBot();
+  await bot.init();
   const server = await createServer(bot);
 
   await bot.api.setWebhook(`${config.WEBHOOK_URL}/webhook`, {

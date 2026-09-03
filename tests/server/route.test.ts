@@ -6,10 +6,6 @@ vi.mock('../../src/config/index.js', () => ({
   },
 }));
 
-vi.mock('grammy', () => ({
-  webhookCallback: vi.fn(() => async () => ({})),
-}));
-
 import { createServer } from '../../src/server/index.js';
 import type { Bot } from 'grammy';
 
