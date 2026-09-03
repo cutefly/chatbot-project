@@ -241,7 +241,7 @@ describe('LLMService', () => {
     await chat('openai/gpt-4o-mini', [{ role: 'user', content: 'echo hi' }]);
 
     expect(global.fetch).toHaveBeenCalledTimes(2);
-    const calls = (global.fetch as any).mock.calls;
+    const calls = vi.mocked(global.fetch).mock.calls;
     for (const call of calls) {
       const init = call[1] as RequestInit;
       expect(init.signal).toBeDefined();
@@ -252,7 +252,7 @@ describe('LLMService', () => {
 
   it('propagates an AbortError out of chat()', async () => {
     const abortError = Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
-    global.fetch = vi.fn().mockRejectedValue(abortError) as any;
+    global.fetch = vi.fn().mockRejectedValue(abortError) as unknown as typeof fetch;
 
     await expect(chat('openai/gpt-4o-mini', [])).rejects.toThrow(/abort/i);
   });
