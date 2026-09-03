@@ -25,6 +25,8 @@ interface OpenRouterResponse {
 }
 
 const MAX_TOOL_ITERATIONS = 5;
+const PER_REQUEST_TIMEOUT_MS = 30_000;
+const TOTAL_BUDGET_MS = 75_000;
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
 export async function chat(model: string, messages: LLMMessage[]): Promise<string> {
@@ -33,8 +35,10 @@ export async function chat(model: string, messages: LLMMessage[]): Promise<strin
 
   logger.info(`LLM call started`, { model, tools: tools.map(t => t.function.name) });
 
+  const deadline = AbortSignal.timeout(TOTAL_BUDGET_MS);
+
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const response = await callOpenRouter(model, currentMessages, tools);
+    const response = await callOpenRouter(model, currentMessages, tools, deadline);
     const choice = response.choices[0];
 
     if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls?.length) {
@@ -86,6 +90,7 @@ async function callOpenRouter(
   model: string,
   messages: LLMMessage[],
   tools: ReturnType<typeof toolRegistry.toFunctionDefinitions>,
+  deadline: AbortSignal,
 ): Promise<OpenRouterResponse> {
   const body: Record<string, unknown> = { model, messages };
   if (tools.length > 0) {
@@ -101,6 +106,7 @@ async function callOpenRouter(
       'HTTP-Referer': config.WEBHOOK_URL,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.any([deadline, AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS)]),
   });
 
   if (!response.ok) {

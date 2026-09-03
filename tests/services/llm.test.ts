@@ -214,4 +214,46 @@ describe('LLMService', () => {
     );
     expect(systemMessages).toHaveLength(0);
   });
+
+  it('passes an AbortSignal on every OpenRouter request', async () => {
+    const toolCall = {
+      id: 'call_1',
+      type: 'function',
+      function: { name: 'echo', arguments: '{"message":"hi"}' },
+    };
+
+    mockFetch([
+      {
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: { role: 'assistant', content: null, tool_calls: [toolCall] },
+        }],
+      },
+      {
+        choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Done!' } }],
+      },
+    ]);
+
+    vi.mocked(executeToolCalls).mockResolvedValue([
+      { tool_call_id: 'call_1', role: 'tool', content: '{"echoed":"hi"}', isError: false },
+    ]);
+
+    await chat('openai/gpt-4o-mini', [{ role: 'user', content: 'echo hi' }]);
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    const calls = (global.fetch as any).mock.calls;
+    for (const call of calls) {
+      const init = call[1] as RequestInit;
+      expect(init.signal).toBeDefined();
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(init.signal!.aborted).toBe(false);
+    }
+  });
+
+  it('propagates an AbortError out of chat()', async () => {
+    const abortError = Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    global.fetch = vi.fn().mockRejectedValue(abortError) as any;
+
+    await expect(chat('openai/gpt-4o-mini', [])).rejects.toThrow(/abort/i);
+  });
 });
