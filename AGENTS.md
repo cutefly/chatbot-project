@@ -29,6 +29,10 @@ npm test -- tests/tools/
 npx tsc --noEmit
 ```
 
+No lint/format script or config exists in this repo — don't guess an `npm run lint`; `tsc --noEmit` is the only verification step besides tests.
+
+**Local webhook dev:** `WEBHOOK_URL` must be a live public HTTPS URL at startup (bot calls `setWebhook` immediately). Use `ngrok http 3000` (see `NGROK.md`) and set `WEBHOOK_URL` to the resulting `https://*.ngrok-free.app` URL before starting the bot.
+
 ---
 
 ## Environment Variables (`.env`)
@@ -150,14 +154,17 @@ src/
 │   ├── commands/       # start, menu, reset, model, models, status
 │   └── handlers/
 │       ├── message.ts        # processMessage() — main LLM pipeline (also called by callbackQuery)
-│       ├── callbackQuery.ts  # menu:/result:/action: prefix dispatch → DB MenuItem routing
-│       └── menuHelpers.ts    # parseListFromLLMResponse, buildDynamicKeyboard, callToolPrompt
+│       ├── callbackQuery.ts  # menu:/result:/action:/back:/close dispatch → DB MenuItem routing
+│       ├── menuNav.ts        # single menu message: view snapshot stack + edit/close helpers
+│       └── menuHelpers.ts    # parseListFromLLMResponse, row/view builders, callToolPrompt
 ├── server/
 │   └── index.ts        # Fastify + /webhook + /health + /api/get-time-by-region
 └── main.ts             # Entrypoint
 
 tests/
 ├── bot/menuHelpers.test.ts
+├── bot/menuNav.test.ts
+├── bot/callbackQuery.test.ts
 ├── tools/registry.test.ts
 ├── tools/executor.test.ts
 ├── tools/loader.test.ts
@@ -168,7 +175,9 @@ tests/
 ├── services/llm.test.ts
 ├── services/menu.test.ts
 ├── middleware/whitelist.test.ts
-└── server/time.test.ts
+└── server/
+    ├── time.test.ts
+    └── route.test.ts
 ```
 
 ---
@@ -324,7 +333,44 @@ Menus are stored in **PostgreSQL** (`MenuItem` table) and support an n-depth hie
 | `menu:{id}` | Static MenuItem tap | Look up MenuItem → dispatch on `actionType` |
 | `result:{submenuId}:{value}` | Dynamic result button tap | Show `getChildren(submenuId)` as action buttons with `value` as context |
 | `action:{menuItemId}:{value}` | Sub-action button tap | Substitute `{value}` in `actionValue` → `processMessage` |
+| `back:{menuItemId}` | `⬅️ 이전` tap | Pop the snapshot stack → re-render the previous screen |
+| `close` | `❌ 닫기` tap | Delete the menu message + drop its navigation state |
 | `legacy_menu:{id}` | Old `menu.json` button tap | Backward compatibility |
+
+Buttons whose `callback_data` would exceed 64 bytes are dropped at render time
+(`buildDynamicRows` / `buildActionRows`) — a long UTF-8 `value` would otherwise be
+rejected by Telegram.
+
+### Single menu message + navigation stack
+
+The menu lives in **one message**. `/menu` sends it (`sendView`) and every later
+navigation **edits that same message** (`showView` → `editMessageText`), so the
+previous screen is never left on screen. Because the message id never changes, it
+keys the navigation state in `menuNav.ts`:
+
+- `Map<"chatId:messageId", ViewSnapshot[]>`, max 500 sessions, 30-minute TTL, LRU eviction.
+- A `ViewSnapshot` is the fully rendered screen (`title` + `rows`), so `⬅️ 이전`
+  restores LLM-generated lists **without re-calling the LLM**.
+- State lost (restart / TTL) → `back:{menuItemId}` falls back to rebuilding the
+  nearest static ancestor from the DB; still no LLM call.
+
+### Keyboard layout rules
+
+```
+[항목1] [항목2]
+[항목3] [항목4]
+[항목5]              ← odd tail sits alone
+[⬅️ 이전] [❌ 닫기]   ← control row, always last, never mixed with items
+```
+
+- Menu items render **2 per row** (`chunkIntoRows`); control buttons get their own bottom row.
+- Root screens show `❌ 닫기` only; every deeper screen shows `⬅️ 이전` + `❌ 닫기`.
+- The menu **closes** (message deleted) when: `❌ 닫기` is tapped, `⬅️ 이전` is tapped
+  with nothing left above, or a final step runs (`action` / `prompt` item, or a `tool`
+  item whose result has no buttons to pick).
+- While a `tool` item runs, the message is edited to `조회 중...` **without a keyboard**
+  so buttons cannot be double-tapped; a failed tool call restores the previous screen
+  with an error note prepended.
 
 ### Example flow: 국가 → 도시 → 기온/시간
 
